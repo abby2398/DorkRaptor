@@ -8,6 +8,7 @@
 ![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?style=for-the-badge)
 
 ---
+<img width="1621" height="831" alt="image" src="https://github.com/user-attachments/assets/59114104-56c8-491e-bba5-3b6260b971c5" />
 
 ## Overview
 
