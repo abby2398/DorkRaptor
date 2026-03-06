@@ -65,7 +65,7 @@ DorkRaptor automates the entire Google dorking and OSINT reconnaissance workflow
 ### 1. Clone and configure
 
 ```bash
-git clone https://github.com/yourorg/dorkraptor.git
+git clone https://github.com/abby2398/DorkRaptor.git
 cd dorkraptor
 cp .env.example .env
 # Edit .env with your API keys (optional)
@@ -230,8 +230,8 @@ DorkRaptor uses only **publicly indexed data sources**. It does not:
 - [ ] Dark web monitoring feeds
 - [ ] PDF/CSV report export
 - [ ] Scheduled recurring scans
-- [ ] Multi-user support with auth
-- [ ] Webhook notifications
+- [✔] Multi-user support with auth
+- [✔] Webhook notifications
 
 ---
 
