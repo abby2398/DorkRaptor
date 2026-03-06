@@ -1,0 +1,108 @@
+.settings-layout { display: flex; flex-direction: column; gap: 20px; max-width: 720px; }
+
+.settings-section { }
+
+.settings-body { padding: 24px; display: flex; flex-direction: column; gap: 28px; }
+
+.setting-field label {
+  display: block;
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 6px;
+  color: var(--text-primary);
+}
+
+.setting-desc {
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--text-tertiary);
+  margin-bottom: 12px;
+  line-height: 1.6;
+}
+
+.key-status { margin-bottom: 8px; }
+
+.configured-badge {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--severity-low);
+  background: var(--severity-low-bg);
+  border: 1px solid rgba(6,214,160,0.3);
+  padding: 3px 10px;
+  border-radius: 3px;
+}
+
+.not-configured {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-tertiary);
+}
+
+.range-row { display: flex; gap: 20px; align-items: flex-end; }
+
+.range-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.range-item span {
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--text-tertiary);
+}
+
+.ethics-card .card-header { border-color: rgba(255,140,66,0.2); }
+.ethics-card .card-header h3 { color: var(--severity-high); }
+
+.settings-body p {
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+.settings-body ul {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.settings-body li {
+  font-size: 13px;
+  color: var(--text-secondary);
+  padding-left: 20px;
+  position: relative;
+  line-height: 1.5;
+  font-family: var(--font-mono);
+}
+
+.settings-body li::before {
+  content: '→';
+  position: absolute;
+  left: 0;
+  color: var(--severity-medium);
+}
+
+.ethics-note {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  font-style: italic;
+  margin-top: 8px;
+}
+
+.settings-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 16px;
+}
+
+.save-msg {
+  font-size: 13px;
+  font-family: var(--font-mono);
+}
+
+.save-msg.success { color: var(--severity-low); }
+.save-msg.error { color: var(--severity-critical); }

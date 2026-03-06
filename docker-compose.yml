@@ -1,0 +1,134 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: dorkraptor-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: dorkraptor
+      POSTGRES_PASSWORD: dorkraptor
+      POSTGRES_DB: dorkraptor
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dorkraptor"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - dorkraptor-net
+
+  redis:
+    image: redis:7-alpine
+    container_name: dorkraptor-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - dorkraptor-net
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: dorkraptor-backend
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+asyncpg://dorkraptor:dorkraptor@postgres:5432/dorkraptor
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      DEBUG: ${DEBUG:-false}
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - dorkraptor-net
+
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: dorkraptor-worker
+    restart: unless-stopped
+    command: celery -A app.tasks.scan_tasks:celery_app worker --loglevel=info --concurrency=2 -Q celery
+    environment:
+      DATABASE_URL: postgresql+asyncpg://dorkraptor:dorkraptor@postgres:5432/dorkraptor
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - dorkraptor-net
+
+  beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: dorkraptor-beat
+    restart: unless-stopped
+    command: celery -A app.tasks.scan_tasks:celery_app beat --loglevel=info
+    environment:
+      DATABASE_URL: postgresql+asyncpg://dorkraptor:dorkraptor@postgres:5432/dorkraptor
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+    depends_on:
+      - redis
+    networks:
+      - dorkraptor-net
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: dorkraptor-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    networks:
+      - dorkraptor-net
+
+  flower:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: dorkraptor-flower
+    restart: unless-stopped
+    command: celery -A app.tasks.scan_tasks:celery_app flower --port=5555
+    environment:
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+    ports:
+      - "5555:5555"
+    depends_on:
+      - redis
+    networks:
+      - dorkraptor-net
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  dorkraptor-net:
+    driver: bridge
