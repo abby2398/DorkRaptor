@@ -92,34 +92,32 @@ class GitHubLeakScanner:
         return results
 
     async def _web_search(self, domain: str) -> List[Dict]:
-        """Web-based GitHub search (no token required, limited)"""
+        """Web-based GitHub search (no token required, limited)."""
         results = []
 
-        # Generate GitHub-specific search queries for Bing
         github_queries = [
             f'site:github.com "{domain}" password',
             f'site:github.com "{domain}" api_key',
             f'site:github.com "{domain}" secret',
         ]
 
-        from app.services.search_engine import BingSearchEngine
-        bing = BingSearchEngine()
-
-        for query in github_queries[:3]:
-            try:
-                search_results = await bing.search(query, num_results=5)
-                for r in search_results:
-                    if "github.com" in r.url:
-                        results.append({
-                            "url": r.url,
-                            "title": r.title,
-                            "snippet": r.snippet,
-                            "dork_query": query,
-                            "source": "github",
-                            "category": "github_leaks",
-                        })
-            except Exception as e:
-                logger.warning(f"GitHub web search error: {e}")
+        from app.search import SearchOrchestrator
+        async with SearchOrchestrator(enabled_engines=["bing"]) as orchestrator:
+            for query in github_queries[:3]:
+                try:
+                    search_results = await orchestrator.search_engine("bing", query, num_results=5)
+                    for r in search_results:
+                        if "github.com" in r.url:
+                            results.append({
+                                "url": r.url,
+                                "title": r.title,
+                                "snippet": r.snippet,
+                                "dork_query": query,
+                                "source": "github",
+                                "category": "github_leaks",
+                            })
+                except Exception as e:
+                    logger.warning(f"GitHub web search error: {e}")
 
         return results
 

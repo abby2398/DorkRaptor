@@ -1,16 +1,24 @@
 import { useState } from "react";
+import { clearAuth, isAdmin } from "../utils/auth";
 import "./Sidebar.css";
 
-const NAV_ITEMS = [
-  { id: "dashboard", label: "Dashboard", icon: "⬡" },
-  { id: "history", label: "Scan History", icon: "◈" },
-  { id: "settings", label: "Settings", icon: "◎" },
-];
+export default function Sidebar({ currentPage, onNavigate, isOpen, onToggle, user }) {
+  const admin = isAdmin();
 
-export default function Sidebar({ currentPage, onNavigate, isOpen, onToggle }) {
+  const NAV_ITEMS = [
+    { id: "dashboard", label: "Dashboard", icon: "⬡" },
+    { id: "history", label: "Scan History", icon: "◈" },
+    { id: "settings", label: "Settings", icon: "◎" },
+    ...(admin ? [{ id: "admin", label: "Admin Panel", icon: "🛡", adminOnly: true }] : []),
+  ];
+
+  const handleLogout = () => {
+    clearAuth();
+    window.location.reload();
+  };
+
   return (
     <aside className={`sidebar ${isOpen ? "open" : "closed"}`}>
-      {/* Logo */}
       <div className="sidebar-logo" onClick={onToggle}>
         <div className="logo-icon">
           <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
@@ -27,12 +35,11 @@ export default function Sidebar({ currentPage, onNavigate, isOpen, onToggle }) {
         )}
       </div>
 
-      {/* Nav items */}
       <nav className="sidebar-nav">
         {NAV_ITEMS.map((item) => (
           <button
             key={item.id}
-            className={`nav-item ${currentPage === item.id || (currentPage === "scan" && item.id === "dashboard") ? "active" : ""}`}
+            className={`nav-item ${currentPage === item.id || (currentPage === "scan" && item.id === "dashboard") ? "active" : ""} ${item.adminOnly ? "admin-nav-item" : ""}`}
             onClick={() => onNavigate(item.id)}
             title={!isOpen ? item.label : undefined}
           >
@@ -43,7 +50,29 @@ export default function Sidebar({ currentPage, onNavigate, isOpen, onToggle }) {
         ))}
       </nav>
 
-      {/* Footer */}
+      {/* User Info */}
+      {isOpen && user && (
+        <div className="sidebar-user">
+          <div className="sidebar-user-avatar">
+            {user.avatar_url
+              ? <img src={user.avatar_url} alt="" />
+              : <span>{(user.full_name || user.email)[0].toUpperCase()}</span>
+            }
+          </div>
+          <div className="sidebar-user-info">
+            <div className="sidebar-user-name">{user.full_name || user.email.split("@")[0]}</div>
+            <div className="sidebar-user-role">{user.role === "admin" ? "🛡 Admin" : "User"}</div>
+          </div>
+          <button className="sidebar-logout" onClick={handleLogout} title="Sign out">⏻</button>
+        </div>
+      )}
+
+      {!isOpen && user && (
+        <button className="nav-item" onClick={handleLogout} title="Sign out" style={{ marginTop: "auto" }}>
+          <span className="nav-icon">⏻</span>
+        </button>
+      )}
+
       {isOpen && (
         <div className="sidebar-footer">
           <div className="version-tag">v1.0.0</div>

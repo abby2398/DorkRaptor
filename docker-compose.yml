@@ -45,6 +45,8 @@ services:
       CELERY_RESULT_BACKEND: redis://redis:6379/1
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      SECRET_KEY: ${SECRET_KEY:-dorkraptor-secret-change-this-in-production}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       DEBUG: ${DEBUG:-false}
     ports:
       - "8000:8000"
@@ -70,6 +72,7 @@ services:
       CELERY_RESULT_BACKEND: redis://redis:6379/1
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      SECRET_KEY: ${SECRET_KEY:-dorkraptor-secret-change-this-in-production}
     depends_on:
       postgres:
         condition: service_healthy

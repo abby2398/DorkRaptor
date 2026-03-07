@@ -52,15 +52,10 @@ VALID_SOURCES = {"google", "bing", "duckduckgo", "yandex", "github", "cloud_scan
 
 
 def make_session_factory():
-    """
-    Create a brand-new engine + session factory bound to the CURRENT event loop.
-    Must be called from inside the async context (after the loop is created).
-    """
     engine = create_async_engine(
         settings.DATABASE_URL,
         echo=False,
         pool_pre_ping=True,
-        # Keep the pool small — this engine is per-task and will be disposed
         pool_size=2,
         max_overflow=0,
     )
@@ -79,7 +74,8 @@ def run_async(coro):
         asyncio.set_event_loop(None)
 
 
-@celery_app.task(bind=True, name="tasks.run_scan", max_retries=2)
+# max_retries=0 — no retries. A failed scan should stay failed, not restart from 0.
+@celery_app.task(bind=True, name="tasks.run_scan", max_retries=0)
 def run_scan_task(self, scan_id: str, openai_key: Optional[str] = None, github_token: Optional[str] = None):
     logger.info(f"Starting scan task for scan_id: {scan_id}")
     try:
@@ -94,7 +90,6 @@ def run_scan_task(self, scan_id: str, openai_key: Optional[str] = None, github_t
 
 
 async def _execute_scan(scan_id: str, openai_key: Optional[str], github_token: Optional[str]):
-    # Engine + session factory created HERE — inside the fresh event loop
     engine, SessionLocal = make_session_factory()
 
     try:
@@ -106,121 +101,144 @@ async def _execute_scan(scan_id: str, openai_key: Optional[str], github_token: O
                 logger.error(f"Scan {scan_id} not found")
                 return
 
+            # If scan already completed or failed (e.g. duplicate delivery), skip
+            if scan.status in ("completed", "failed"):
+                logger.warning(f"Scan {scan_id} already in terminal state: {scan.status}, skipping")
+                return
+
             domain = scan.domain
             scan.status = "running"
             scan.started_at = datetime.now(timezone.utc)
+            scan.dorks_executed = 0
             await db.commit()
 
+            all_findings = []
+            seen_urls = set()
+
+            # === Phase 1: Dork Scanning ===
+            logger.info(f"Phase 1: Dork scanning for {domain}")
+            dorks = get_all_dorks(domain)
+            total_dorks = len(dorks)
+            scan.dorks_total = total_dorks
+            await db.commit()
+            logger.info(f"Running {total_dorks} dorks for {domain}")
+
             try:
-                all_findings = []
-                seen_urls = set()
+                async with SearchOrchestrator() as orchestrator:
+                    batch_size = 5
+                    for i in range(0, total_dorks, batch_size):
+                        batch = dorks[i:i + batch_size]
+                        tasks = [orchestrator.search_all_engines(d["query"]) for d in batch]
+                        results_batch = await asyncio.gather(*tasks, return_exceptions=True)
 
-                # === Phase 1: Dork Scanning ===
-                logger.info(f"Phase 1: Dork scanning for {domain}")
-                dorks = get_all_dorks(domain)
-                scan.dorks_total = len(dorks)
-                await db.commit()
+                        for dork_info, search_results in zip(batch, results_batch):
+                            if isinstance(search_results, list):
+                                for r in search_results:
+                                    if r.url not in seen_urls:
+                                        seen_urls.add(r.url)
+                                        all_findings.append({
+                                            "url": r.url,
+                                            "title": r.title,
+                                            "snippet": r.snippet,
+                                            "dork_query": dork_info["query"],
+                                            "source": r.engine,
+                                            "category": dork_info["category"],
+                                        })
 
-                orchestrator = SearchOrchestrator()
-                batch_size = 5
-                for i in range(0, min(len(dorks), 100), batch_size):
-                    batch = dorks[i:i + batch_size]
-                    tasks = [orchestrator.search_all_engines(d["query"]) for d in batch]
-                    results_batch = await asyncio.gather(*tasks, return_exceptions=True)
-
-                    for dork_info, search_results in zip(batch, results_batch):
-                        if isinstance(search_results, list):
-                            for r in search_results:
-                                if r.url not in seen_urls:
-                                    seen_urls.add(r.url)
-                                    all_findings.append({
-                                        "url": r.url,
-                                        "title": r.title,
-                                        "snippet": r.snippet,
-                                        "dork_query": dork_info["query"],
-                                        "source": r.engine,
-                                        "category": dork_info["category"],
-                                    })
-
-                    scan.dorks_executed = i + len(batch)
-                    await db.commit()
-
-                # === Phase 2: GitHub Leak Detection ===
-                logger.info(f"Phase 2: GitHub scan for {domain}")
-                try:
-                    github_scanner = GitHubLeakScanner(token=github_token)
-                    github_findings = await github_scanner.scan_domain(domain)
-                    for f in github_findings:
-                        if f["url"] not in seen_urls:
-                            seen_urls.add(f["url"])
-                            all_findings.append(f)
-                except Exception as e:
-                    logger.warning(f"GitHub scan error: {e}")
-
-                # === Phase 3: Cloud Exposure ===
-                logger.info(f"Phase 3: Cloud scan for {domain}")
-                try:
-                    cloud_scanner = CloudExposureScanner()
-                    cloud_findings = await cloud_scanner.scan_domain(domain)
-                    for f in cloud_findings:
-                        if f["url"] not in seen_urls:
-                            seen_urls.add(f["url"])
-                            all_findings.append(f)
-                except Exception as e:
-                    logger.warning(f"Cloud scan error: {e}")
-
-                # === Phase 4: AI Analysis ===
-                logger.info(f"Phase 4: AI analysis of {len(all_findings)} findings")
-                if all_findings:
-                    all_findings = await analyze_with_ai(all_findings, domain, openai_key)
-
-                # === Phase 5: Save to DB ===
-                severity_counts = {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0}
-
-                for fd in all_findings:
-                    sev = fd.get("severity", "info").lower()
-                    cat = fd.get("category", "other").lower()
-                    src = fd.get("source", "bing").lower()
-
-                    if sev not in VALID_SEVERITIES:
-                        sev = "info"
-                    if cat not in VALID_CATEGORIES:
-                        cat = "other"
-                    if src not in VALID_SOURCES:
-                        src = "bing"
-
-                    finding = Finding(
-                        scan_id=uuid.UUID(scan_id),
-                        url=fd["url"],
-                        title=fd.get("title", ""),
-                        snippet=fd.get("snippet", ""),
-                        dork_query=fd.get("dork_query", ""),
-                        source=src,
-                        category=cat,
-                        severity=sev,
-                        ai_explanation=fd.get("ai_explanation", ""),
-                    )
-                    db.add(finding)
-                    severity_counts[sev] = severity_counts.get(sev, 0) + 1
-
-                scan.status = "completed"
-                scan.completed_at = datetime.now(timezone.utc)
-                scan.total_findings = len(all_findings)
-                scan.critical_count = severity_counts["critical"]
-                scan.high_count = severity_counts["high"]
-                scan.medium_count = severity_counts["medium"]
-                scan.low_count = severity_counts["low"]
-                scan.info_count = severity_counts["info"]
-                await db.commit()
-                logger.info(f"Scan {scan_id} completed with {len(all_findings)} findings")
+                        scan.dorks_executed = min(i + len(batch), total_dorks)
+                        await db.commit()
+                        logger.info(f"Progress: {scan.dorks_executed}/{total_dorks} dorks, {len(all_findings)} findings so far")
 
             except Exception as e:
-                logger.error(f"Scan execution error: {e}", exc_info=True)
+                # Dork phase error — log but continue to save whatever we got
+                logger.error(f"Dork scanning error (partial results saved): {e}", exc_info=True)
+
+            # === Phase 2: GitHub Leak Detection ===
+            logger.info(f"Phase 2: GitHub scan for {domain}")
+            try:
+                github_scanner = GitHubLeakScanner(token=github_token)
+                github_findings = await github_scanner.scan_domain(domain)
+                for f in github_findings:
+                    if f["url"] not in seen_urls:
+                        seen_urls.add(f["url"])
+                        all_findings.append(f)
+                logger.info(f"GitHub scan found {len(github_findings)} results")
+            except Exception as e:
+                logger.warning(f"GitHub scan error (non-fatal): {e}")
+
+            # === Phase 3: Cloud Exposure ===
+            logger.info(f"Phase 3: Cloud scan for {domain}")
+            try:
+                cloud_scanner = CloudExposureScanner()
+                cloud_findings = await cloud_scanner.scan_domain(domain)
+                for f in cloud_findings:
+                    if f["url"] not in seen_urls:
+                        seen_urls.add(f["url"])
+                        all_findings.append(f)
+                logger.info(f"Cloud scan found {len(cloud_findings)} results")
+            except Exception as e:
+                logger.warning(f"Cloud scan error (non-fatal): {e}")
+
+            # === Phase 4: AI Analysis ===
+            logger.info(f"Phase 4: AI analysis of {len(all_findings)} findings")
+            try:
+                if all_findings:
+                    all_findings = await analyze_with_ai(all_findings, domain, openai_key)
+            except Exception as e:
+                logger.warning(f"AI analysis error (non-fatal, using rule-based fallback): {e}")
+
+            # === Phase 5: Save to DB ===
+            logger.info(f"Phase 5: Saving {len(all_findings)} findings to database")
+            severity_counts = {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0}
+
+            for fd in all_findings:
+                sev = fd.get("severity", "info").lower()
+                cat = fd.get("category", "other").lower()
+                src = fd.get("source", "bing").lower()
+
+                if sev not in VALID_SEVERITIES:
+                    sev = "info"
+                if cat not in VALID_CATEGORIES:
+                    cat = "other"
+                if src not in VALID_SOURCES:
+                    src = "bing"
+
+                finding = Finding(
+                    scan_id=uuid.UUID(scan_id),
+                    url=fd["url"],
+                    title=fd.get("title", ""),
+                    snippet=fd.get("snippet", ""),
+                    dork_query=fd.get("dork_query", ""),
+                    source=src,
+                    category=cat,
+                    severity=sev,
+                    ai_explanation=fd.get("ai_explanation", ""),
+                )
+                db.add(finding)
+                severity_counts[sev] = severity_counts.get(sev, 0) + 1
+
+            scan.status = "completed"
+            scan.completed_at = datetime.now(timezone.utc)
+            scan.total_findings = len(all_findings)
+            scan.critical_count = severity_counts["critical"]
+            scan.high_count = severity_counts["high"]
+            scan.medium_count = severity_counts["medium"]
+            scan.low_count = severity_counts["low"]
+            scan.info_count = severity_counts["info"]
+            await db.commit()
+            logger.info(f"Scan {scan_id} completed with {len(all_findings)} findings")
+
+    except Exception as e:
+        logger.error(f"Fatal scan error: {e}", exc_info=True)
+        async with SessionLocal() as db:
+            result = await db.execute(select(Scan).where(Scan.id == uuid.UUID(scan_id)))
+            scan = result.scalar_one_or_none()
+            if scan:
                 scan.status = "failed"
                 scan.error_message = str(e)
                 scan.completed_at = datetime.now(timezone.utc)
                 await db.commit()
-                raise
+        raise
     finally:
         await engine.dispose()
 

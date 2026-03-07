@@ -1,10 +1,24 @@
-const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:8000/api/v1";
+import { getToken, clearAuth } from "./auth";
+
+// In Docker, nginx proxies /api → backend:8000. In local dev (vite proxy), same applies.
+const API_BASE = import.meta.env.VITE_API_URL || "/api/v1";
 
 async function fetchAPI(path, options = {}) {
-  const resp = await fetch(`${API_BASE}${path}`, {
-    headers: { "Content-Type": "application/json", ...options.headers },
-    ...options,
-  });
+  const token = getToken();
+  const headers = {
+    "Content-Type": "application/json",
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...options.headers,
+  };
+
+  const resp = await fetch(`${API_BASE}${path}`, { ...options, headers });
+
+  if (resp.status === 401) {
+    clearAuth();
+    window.location.reload();
+    return;
+  }
+
   if (!resp.ok) {
     const error = await resp.json().catch(() => ({ detail: resp.statusText }));
     throw new Error(error.detail || "Request failed");
@@ -13,6 +27,21 @@ async function fetchAPI(path, options = {}) {
 }
 
 export const api = {
+  // Auth
+  register: (data) => fetchAPI("/auth/register", { method: "POST", body: JSON.stringify(data) }),
+  login: (data) => fetchAPI("/auth/login", { method: "POST", body: JSON.stringify(data) }),
+  googleAuth: (id_token) => fetchAPI("/auth/google", { method: "POST", body: JSON.stringify({ id_token }) }),
+  getMe: () => fetchAPI("/auth/me"),
+
+  // Admin
+  adminStats: () => fetchAPI("/admin/stats"),
+  adminListUsers: (skip = 0, limit = 50) => fetchAPI(`/admin/users?skip=${skip}&limit=${limit}`),
+  adminCreateUser: (data) => fetchAPI("/admin/users", { method: "POST", body: JSON.stringify(data) }),
+  adminUpdateUser: (id, data) => fetchAPI(`/admin/users/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+  adminDeleteUser: (id) => fetchAPI(`/admin/users/${id}`, { method: "DELETE" }),
+  adminListScans: (skip = 0, limit = 50) => fetchAPI(`/admin/scans?skip=${skip}&limit=${limit}`),
+  adminDeleteScan: (id) => fetchAPI(`/admin/scans/${id}`, { method: "DELETE" }),
+
   // Scans
   createScan: (data) => fetchAPI("/scans/", { method: "POST", body: JSON.stringify(data) }),
   listScans: (skip = 0, limit = 20) => fetchAPI(`/scans/?skip=${skip}&limit=${limit}`),

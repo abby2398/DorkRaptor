@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 import logging
 
 from app.api import scans, results, settings, health
+from app.api import auth, admin
 from app.core.database import init_db
 
 logging.basicConfig(level=logging.INFO)
@@ -34,6 +35,8 @@ app.add_middleware(
 )
 
 app.include_router(health.router, prefix="/api/v1", tags=["health"])
+app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
+app.include_router(admin.router, prefix="/api/v1/admin", tags=["admin"])
 app.include_router(scans.router, prefix="/api/v1/scans", tags=["scans"])
 app.include_router(results.router, prefix="/api/v1/results", tags=["results"])
 app.include_router(settings.router, prefix="/api/v1/settings", tags=["settings"])
